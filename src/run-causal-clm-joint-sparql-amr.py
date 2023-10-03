@@ -65,7 +65,7 @@ CUDA_VISIBLE_DEVICES=0,1,2 python src/run-causal-clm-joint-sparql-amr.py \
 
 
 
-CUDA_VISIBLE_DEVICES=0,1,2 python src/run-causal-clm-joint-sparql-amr.py \
+CUDA_VISIBLE_DEVICES=0,1 python src/run-causal-clm-joint-sparql-amr.py \
 --model_name_or_path ~/tmp/tmphgf56dee39442-distill-2023-10-02-joint-amr-sparql-massive-16eps \
 --tokenizer_name ~/models/downloaded/comet-distill-tokenizer \
 --train_file data/qald-joint-train-flan-2023-10-02.csv \
@@ -78,8 +78,9 @@ CUDA_VISIBLE_DEVICES=0,1,2 python src/run-causal-clm-joint-sparql-amr.py \
 --do_metrics False \
 --save_strategy no \
 --search_type beam \
---num_beams 5 \
---temperature 0.95 \
+--num_beams 10 \
+--num_beam_groups 2 \
+--diversity_penalty 1.0 \
 --num_train_epochs 16 \
 --output_dir ~/tmp/tmphgf56dee39442-distill-2023-10-02-joint-amr-sparql-massive-16eps \
 --overwrite_output_dir \
@@ -387,9 +388,17 @@ class DataTrainingArguments:
         default=0.7,
         metadata={"help": "temperature"},
     )
+    diversity_penalty: Optional[float] = field(
+        default=1.0,
+        metadata={"help": "diversity penalty: "},
+    )
     num_beams: Optional[int] = field(
         default=1,
         metadata={"help": "number of beams"},
+    )
+    num_beam_groups: Optional[int] = field(
+        default=1,
+        metadata={"help": "number of beam groups"},
     )
     p_sampling: Optional[float] = field(
         default=0.9,
@@ -956,15 +965,14 @@ def main():
                         gen_outputs = model.generate(
                             **encoded_prompt,
                             max_length=MAX_LENGTH,
-                            temperature=data_args.temperature,
                             length_penalty=0.0,
                             num_beams=data_args.num_beams,
-                            num_beam_groups=5,
+                            num_beam_groups=data_args.num_beam_groups,
                             num_return_sequences=5,
                             no_repeat_ngram_size=4,
                             top_p=data_args.p_sampling,
                             repetition_penalty=1.0,
-                            diversity_penalty=1.0,
+                            diversity_penalty=data_args.diversity_penalty,
                             early_stopping=True,
                             return_dict_in_generate=True,
                             output_scores=True,
@@ -1004,8 +1012,8 @@ def main():
 
                         ex_g_output = tokenizer.decode(g_output, skip_special_tokens=False)
 
-                        # if tokenizer.eos_token in ex_g_output:
-                        #     ex_g_output = ex_g_output.split(tokenizer.eos_token)[0]
+                        if tokenizer.eos_token in ex_g_output:
+                            ex_g_output = ex_g_output.split(tokenizer.eos_token)[0]
 
                         #ex_g_output = ex_g_output.split('/n')[1:]
 
@@ -1020,8 +1028,11 @@ def main():
                         print()
 
                     #transition_scores_to_save = compute_transition_scores_func(generated_outputs, model, gen_outputs, tokenizer)
-
-                    transition_scores_to_save = compute_beam_transition_scores_func_v2(inputs, gen_outputs, model, tokenizer)
+                    try:
+                        transition_scores_to_save = compute_beam_transition_scores_func_v2(inputs, gen_outputs, model, tokenizer)
+                    except Exception as e:
+                        print("##Error in computing transition scores##")
+                        transition_scores_to_save = []
 
                     test_instance = {"sentence": sent,
                                      "ref_sparql": lab_sparql,
